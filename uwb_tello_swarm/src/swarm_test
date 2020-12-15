@@ -2,54 +2,117 @@
 
 import time
 import rospy
-from std_msgs.msg import Empty, UInt8, Bool
+
+from std_msgs.msg import Bool
+from std_msgs.msg import UInt8
+from std_msgs.msg import Empty
+
+from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Twist
+
 from nav_msgs.msg import Odometry
+
+from tello_driver.msg import TelloStatus
 
 MAX_POS_ERROR = 0.2
 BASE_SPEED = 0.2
 
-class TelloController():
 
-	def __init__(self, i, ns, x, y) :
+class TelloController():
+	'''
+		Single Tello EDU Controller
+
+		Contains utility functions for
+		  - Takeoff
+		  - Land
+		  - Navigate to position
+
+		For navigation:
+		  - Uses onboard odometry if no external positioning is given.
+		  - Relies on pose published to "pos_topic" otherwise.
+		    (currently only for position)
+	'''
+
+	def __init__(self, i, ros_ns, pos_topic=None, ori_x=0, ori_y=0, takeoff_height=1.2, external_z=True) :
+		'''
+			Controller to be used by TelloSwarm
+			(can also be used standalone)
+
+			Params:
+			  - takeoff_height: default takeoff
+			  - external_z: use external pos for height (if true) or odom
+		'''
 
 		self.id = i
-		self.ns = ns # ROS namespace
+		self.ns = ros_ns
 
-		self.x0 = x
-		self.y0 = y
+		self.x0 = ori_x
+		self.y0 = ori_y
 		self.z0 = 0
 
-		self.x = x
-		self.y = y
+		self.x = ori_x
+		self.y = ori_y
 		self.z = 0
 
-		self.obj_x = x
-		self.obj_y = y
-		self.obj_z = 0
+		self.obj_x = ori_x
+		self.obj_y = ori_y
+		self.obj_z = takeoff_height
 
-		self.takeoff_pub = rospy.Publisher('/{}/tello/takeoff'.format(self.ns), Empty, queue_size=10)
+		self.external_z = external_z
+
 		self.land_pub = rospy.Publisher('/{}/tello/land'.format(self.ns), Empty, queue_size=10)
+		self.takeoff_pub = rospy.Publisher('/{}/tello/takeoff'.format(self.ns), Empty, queue_size=10)
+		self.emergency_pub = rospy.Publisher('/{}/tello/emergency'.format(self.ns), Empty, queue_size=10)
 
 		self.vel_pub = rospy.Publisher('/{}/tello/cmd_vel'.format(self.ns), Twist, queue_size=10)
-		self.sub_odom = rospy.Subscriber('/{}/tello/odom'.format(self.ns), Odometry, self.cb_odom)
+		self.odom_sub = rospy.Subscriber('/{}/tello/odom'.format(self.ns), Odometry, self.cb_odom)
+
+		if pos_topic :
+			self.pos_topic = pos_topic
+			self.position_sub = rospy.Subscriber('/{}/tello/odom'.format(self.ns), Pose, self.cb_positioning)
 
 		rospy.loginfo('Tello controller for drone {} in network namespace {} is ready.'.format(self.id, self.ns))
 
 	def cb_odom(self, msg) :
-		self.x = msg.pose.pose.position.x
-		self.y = msg.pose.pose.position.y
-		self.z = msg.pose.pose.position.z
+		'''
+			Tello odom subscriber.
+			Only updates positions if there is no external ref.
+		'''
+		if not self.pos_topic :
+			self.x = msg.pose.pose.position.x
+			self.y = msg.pose.pose.position.y
+			self.z = msg.pose.pose.position.z
 
-		# TODO Move this away from here !!
+		if not self.external_z :
+			self.z = msg.pose.pose.position.z
+			self.set_speed()
+	
+	def cb_positioning(self, msg) :
+		'''
+			External positioning subscriber
+		'''
+		self.x = msg.position.x
+		self.y = msg.position.y
+		if self.external_z :
+			self.z = msg.position.z
+		
 		self.set_speed()
 
 	def set_objective(self, x, y, z) :
+		'''
+			Sets objective position
+			(TODO: add orientation)
+		'''
 		self.obj_x = x-self.x0
 		self.obj_y = y-self.y0
 		self.obj_z = z
 
 	def set_speed(self) :
+		'''
+			Calculates speed to current objective position.
+
+			Currently called from the subscriber of odom or position.
+		'''
 
 		# Message template
 		twist = Twist()
@@ -94,41 +157,95 @@ class TelloController():
 		
 
 	def takeoff(self) :
+		'''
+			Publishes a takeoff message
+			five times in 0.1s intervals.
+		'''
 		msg = Empty()
-		for i in range(5) :
+		for _ in range(5) :
 			self.takeoff_pub.publish(msg)
 			time.sleep(0.1)
 
 	def land(self) :
+		'''
+			Publishes a land message
+			five times in 0.1s intervals.
+
+			After 3s turns off the motors 
+			(just in case).
+		'''
 		msg = Empty()
-		for i in range(5) :
+		for _ in range(5) :
 			self.land_pub.publish(msg)
 			time.sleep(0.1)
+		# time.sleep(3)
+		# self.emergency_pub.publish(msg)
 
 
 
-class TelloSwarm():
+class UWBTelloSwarm():
 
-	def __init__(self, num, initial_pos, objective_pos) :
+	def __init__(self, num, initial_pos, objective_pos, uwb_tags) :
+		'''
+
+		'''
 
 		assert num > 0
 		assert num <= len(initial_pos)
 		assert num <= len(objective_pos)
 
+		self.uwb_tags = uwb_tags
+
 		self.drones = []
 		for i in range(num) :
 			self.drones.append(
-				TelloController(i, "ns{}".format(i+1), initial_pos[i][0], initial_pos[i][1])
+				TelloController(i, "tello{}".format(i), initial_pos[i][0], initial_pos[i][1], "/dwm1001/tag/{}/position".format(self.uwb_tags[i]))
 			)
 			self.drones[i].set_objective(objective_pos[i][0], objective_pos[i][1], objective_pos[i][2])
 
 		time.sleep(2)
-
+	
+	def parallel_takeoff(self) :
+		'''
+			Command all drones to take off simultanously
+			(minimal delay if the number is very large)
+		'''
 		for drone in self.drones :
 			drone.takeoff()
 
+	def sequential_takeoff(self, delay=0.23) :
+		'''
+			Command drones to take off one by one
+		'''
+		for drone in self.drones :
+			drone.takeoff()
+			time.sleep(delay)
+
+	def parallel_land(self) :
+		'''
+			Command all drones to land simultanously
+			(minimal delay if the number is very large)
+		'''
+		for drone in self.drones :
+			drone.land()
+
+	def sequential_land(self, delay=0.23) :
+		'''
+			Command drones to land one by one
+		'''
+		for drone in self.drones :
+			drone.land()
+			time.sleep(delay)
+
+	def run(self) :
+		'''
+			Rospy spin while drones go to
+			their objective positions
+		'''
+		rospy.spin()
 
 def main():
+
 	rospy.init_node('tello_swarm_node')
 
 	num_of_drones = 1
@@ -139,17 +256,21 @@ def main():
 	]
 
 	objective_positions = [
-		[0,1,1],
-		[1,1,1]
+		[3,3,1],
+		[3,3,2]
 	]
 
-	swarm = TelloSwarm(num_of_drones, initial_positions, objective_positions)
-	rospy.spin()
+	uwb_tags = [
+		"2B13",
+		"2B26",
+		"8A09"
+	]
 
-	for drone in swarm.drones :
-		drone.land()
-
-	print("Bye Bye ! ;)")
+	swarm = UWBTelloSwarm(num_of_drones, initial_positions, objective_positions, uwb_tags)
+	swarm.sequential_takeoff(delay=0.42)
+	swarm.run()
+	swarm.parallel_land()
+	rospy.loginfo("Swarm landed.")
 
 
 if __name__ == '__main__':
