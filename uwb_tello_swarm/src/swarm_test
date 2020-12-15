@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 
+import sys
 import time
 import rospy
 
@@ -14,7 +15,7 @@ from nav_msgs.msg import Odometry
 
 from tello_driver.msg import TelloStatus
 
-MAX_POS_ERROR = 0.2
+MAX_POS_ERROR = 0.1
 BASE_SPEED = 0.2
 
 
@@ -33,7 +34,7 @@ class TelloController():
 		    (currently only for position)
 	'''
 
-	def __init__(self, i, ros_ns, pos_topic=None, ori_x=0, ori_y=0, takeoff_height=1.2, external_z=True) :
+	def __init__(self, i, ros_ns="tello", pos_topic=None, takeoff_height=1.2, external_z=True) :
 		'''
 			Controller to be used by TelloSwarm
 			(can also be used standalone)
@@ -46,32 +47,59 @@ class TelloController():
 		self.id = i
 		self.ns = ros_ns
 
-		self.x0 = ori_x
-		self.y0 = ori_y
-		self.z0 = 0
+		self.x0 = None
+		self.y0 = None
+		self.z0 = None
 
-		self.x = ori_x
-		self.y = ori_y
-		self.z = 0
+		self.x = None
+		self.y = None
+		self.z = None
 
-		self.obj_x = ori_x
-		self.obj_y = ori_y
+		self.obj_x = None
+		self.obj_y = None
 		self.obj_z = takeoff_height
 
 		self.external_z = external_z
 
-		self.land_pub = rospy.Publisher('/{}/tello/land'.format(self.ns), Empty, queue_size=10)
-		self.takeoff_pub = rospy.Publisher('/{}/tello/takeoff'.format(self.ns), Empty, queue_size=10)
-		self.emergency_pub = rospy.Publisher('/{}/tello/emergency'.format(self.ns), Empty, queue_size=10)
+		self.land_pub = rospy.Publisher('/{}/land'.format(self.ns), Empty, queue_size=10)
+		self.takeoff_pub = rospy.Publisher('/{}/takeoff'.format(self.ns), Empty, queue_size=10)
+		self.emergency_pub = rospy.Publisher('/{}/emergency'.format(self.ns), Empty, queue_size=10)
 
-		self.vel_pub = rospy.Publisher('/{}/tello/cmd_vel'.format(self.ns), Twist, queue_size=10)
-		self.odom_sub = rospy.Subscriber('/{}/tello/odom'.format(self.ns), Odometry, self.cb_odom)
+		self.vel_pub = rospy.Publisher('/{}/cmd_vel'.format(self.ns), Twist, queue_size=10)
+		self.odom_sub = rospy.Subscriber('/{}/odom'.format(self.ns), Odometry, self.cb_odom)
 
 		if pos_topic :
+			print("Subscribing to {}".format(pos_topic))
 			self.pos_topic = pos_topic
-			self.position_sub = rospy.Subscriber('/{}/tello/odom'.format(self.ns), Pose, self.cb_positioning)
+			self.position_sub = rospy.Subscriber(self.pos_topic, Pose, self.cb_positioning)
+			sys.stdout.write('Waiting for external position...')
+			sys.stdout.flush()
 
-		rospy.loginfo('Tello controller for drone {} in network namespace {} is ready.'.format(self.id, self.ns))
+		time.sleep(3)		
+		i = 0
+		rate = rospy.Rate(5)
+		while i < 42 :
+			sys.stdout.write('.')
+			sys.stdout.flush()
+			if self.x is not None and self.y is not None and self.z is not None :
+				sys.stdout.write('... position locked!\n\n')
+				sys.stdout.flush()
+				rospy.loginfo('Tello controller for drone {} in network namespace {} is ready.'.format(self.id, self.ns))
+				self.x0 = self.x
+				self.y0 = self.y
+				self.z0 = self.z
+				self.obj_x = self.x
+				self.obj_y = self.y
+				break
+			else :	
+				rate.sleep()
+				i += 1
+		 
+		if i == 42 :
+			sys.stdout.write('\n\n')
+			sys.stdout.flush()
+			rospy.loginfo('Tello controller for drone {} timed out.'.format(self.id))
+
 
 	def cb_odom(self, msg) :
 		'''
@@ -103,8 +131,8 @@ class TelloController():
 			Sets objective position
 			(TODO: add orientation)
 		'''
-		self.obj_x = x-self.x0
-		self.obj_y = y-self.y0
+		self.obj_x = x#-self.x0
+		self.obj_y = y#-self.y0
 		self.obj_z = z
 
 	def set_speed(self) :
@@ -113,6 +141,7 @@ class TelloController():
 
 			Currently called from the subscriber of odom or position.
 		'''
+		rospy.loginfo("Calculagint speed...")
 
 		# Message template
 		twist = Twist()
@@ -128,24 +157,36 @@ class TelloController():
 		twist.linear.y = 0
 		twist.linear.z = 0
 
-		if self.z < self.obj_z - MAX_POS_ERROR :
-			twist.linear.z = BASE_SPEED
+		# if self.z < self.obj_z - MAX_POS_ERROR :
+		# 	twist.linear.z = BASE_SPEED
 
-		elif self.z > self.obj_z + MAX_POS_ERROR :
-			twist.linear.z = -BASE_SPEED
+		# elif self.z > self.obj_z + MAX_POS_ERROR :
+		# 	twist.linear.z = -BASE_SPEED
 
-		else :
-			if self.x < self.obj_x - MAX_POS_ERROR :
-				twist.linear.x = BASE_SPEED
+		# else :
+		# 	if self.x < self.obj_x - MAX_POS_ERROR :
+		# 		twist.linear.x = BASE_SPEED
 
-			elif self.x > self.obj_x + MAX_POS_ERROR :
-				twist.linear.x = -BASE_SPEED
+		# 	elif self.x > self.obj_x + MAX_POS_ERROR :
+		# 		twist.linear.x = -BASE_SPEED
 
-			if self.y < self.obj_y - MAX_POS_ERROR :
-				twist.linear.x = BASE_SPEED
+		# 	if self.y < self.obj_y - MAX_POS_ERROR :
+		# 		twist.linear.x = BASE_SPEED
 
-			elif self.y > self.obj_y + MAX_POS_ERROR :
-				twist.linear.x = -BASE_SPEED
+		# 	elif self.y > self.obj_y + MAX_POS_ERROR :
+		# 		twist.linear.x = -BASE_SPEED
+		
+		if self.x < self.obj_x - MAX_POS_ERROR :
+			twist.linear.x = BASE_SPEED
+
+		elif self.x > self.obj_x + MAX_POS_ERROR :
+			twist.linear.x = -BASE_SPEED
+
+		if self.y < self.obj_y - MAX_POS_ERROR :
+			twist.linear.y = BASE_SPEED
+
+		elif self.y > self.obj_y + MAX_POS_ERROR :
+			twist.linear.y = -BASE_SPEED
 
 		# No rotation	
 		twist.angular.x = 0
@@ -153,6 +194,7 @@ class TelloController():
 		twist.angular.z = 0
 
 		# Publish
+		rospy.loginfo(str(twist))
 		self.vel_pub.publish(twist)
 		
 
@@ -161,10 +203,11 @@ class TelloController():
 			Publishes a takeoff message
 			five times in 0.1s intervals.
 		'''
+		rospy.loginfo("Tello{} attempting take off...".format(self.id))
 		msg = Empty()
-		for _ in range(5) :
+		for _ in range(1) :
 			self.takeoff_pub.publish(msg)
-			time.sleep(0.1)
+			# time.sleep(0.1)
 
 	def land(self) :
 		'''
@@ -175,9 +218,9 @@ class TelloController():
 			(just in case).
 		'''
 		msg = Empty()
-		for _ in range(5) :
+		for _ in range(1) :
 			self.land_pub.publish(msg)
-			time.sleep(0.1)
+			# time.sleep(0.1)
 		# time.sleep(3)
 		# self.emergency_pub.publish(msg)
 
@@ -185,13 +228,12 @@ class TelloController():
 
 class UWBTelloSwarm():
 
-	def __init__(self, num, initial_pos, objective_pos, uwb_tags) :
+	def __init__(self, num, objective_pos, uwb_tags) :
 		'''
 
 		'''
 
 		assert num > 0
-		assert num <= len(initial_pos)
 		assert num <= len(objective_pos)
 
 		self.uwb_tags = uwb_tags
@@ -199,7 +241,12 @@ class UWBTelloSwarm():
 		self.drones = []
 		for i in range(num) :
 			self.drones.append(
-				TelloController(i, "tello{}".format(i), initial_pos[i][0], initial_pos[i][1], "/dwm1001/tag/{}/position".format(self.uwb_tags[i]))
+				TelloController(i, 
+					ros_ns = "tello{}".format(i), 
+					pos_topic = "/dwm1001/tag/{}/position".format(self.uwb_tags[i]),
+					takeoff_height=1.2, 
+					external_z=True
+				)
 			)
 			self.drones[i].set_objective(objective_pos[i][0], objective_pos[i][1], objective_pos[i][2])
 
@@ -217,6 +264,7 @@ class UWBTelloSwarm():
 		'''
 			Command drones to take off one by one
 		'''
+		rospy.loginfo("Taking off sequentially...")
 		for drone in self.drones :
 			drone.takeoff()
 			time.sleep(delay)
@@ -250,27 +298,28 @@ def main():
 
 	num_of_drones = 1
 	
-	initial_positions = [
-		[0,0],
-		[1,0]
-	]
+	# initial_positions = [
+	# 	[0,0],
+	# 	[1,0]
+	# ]
 
 	objective_positions = [
-		[3,3,1],
-		[3,3,2]
+		[4,4,1],
+		[4,4,2]
 	]
 
 	uwb_tags = [
+		"2D61",
 		"2B13",
 		"2B26",
 		"8A09"
 	]
 
-	swarm = UWBTelloSwarm(num_of_drones, initial_positions, objective_positions, uwb_tags)
+	swarm = UWBTelloSwarm(num_of_drones, objective_positions, uwb_tags)
 	swarm.sequential_takeoff(delay=0.42)
 	swarm.run()
 	swarm.parallel_land()
-	rospy.loginfo("Swarm landed.")
+	rospy.loginfo("Landing swarm.")
 
 
 if __name__ == '__main__':
