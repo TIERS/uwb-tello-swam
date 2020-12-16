@@ -295,21 +295,35 @@ def main():
 
 	rospy.init_node('tello_swarm_test_node', anonymous=True)
 
-	num_of_drones = 1
+	num_of_drones = 6
 	
 	# initial_positions = [
 	# 	[0,0],
 	# 	[1,0]
 	# ]
 
+	# objective_positions = [
+	# 	[4,4,2],
+	# 	[3,4,2],
+	# 	[5.5,4,2]
+	# ]
+
 	objective_positions = [
-		[4,4,2],
-		[4,4,2]
+		[4.0,	4.0,	2],
+		[4.8,	4.0,	2],
+		[5.6,	4.0, 	2],
+		[4.8,	3.0,	2],
+		[4.9,	2.2, 	2],
+		[4.9, 	1.6, 	2]
 	]
 
 	uwb_tags = [
 		"2D61",
 		"2B13",
+		"0CC8",
+		"2891",
+		"0D3B",
+		"28C0",
 		"2B26",
 		"8A09"
 	]
