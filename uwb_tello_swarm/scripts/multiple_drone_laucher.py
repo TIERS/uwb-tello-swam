@@ -28,7 +28,7 @@ local_vid_port_start = 6038   # NOT WORKING ATM
    Number of nodes (IPs considered consecutive)
    and list of matching UWB active tags
 '''
-num_nodes = 1
+num_nodes = 6
 if len(sys.argv) > 0 :
    try : 
       num_nodes = int(sys.argv[1])
@@ -47,6 +47,7 @@ launch_files = []
 
 '''
 for num in range(num_nodes):
+
    cli_args = ['tello_driver', 
                launch_file, 
                'namespace:=tello{}'.format(num), 

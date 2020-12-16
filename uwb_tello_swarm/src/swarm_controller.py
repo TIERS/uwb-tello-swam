@@ -22,7 +22,7 @@ class UWBTelloSwarm():
 
 	def __init__(self, num, objective_pos, uwb_tags) :
 		'''
-
+			Swarm controller
 		'''
 
 		assert num > 0
@@ -42,7 +42,9 @@ class UWBTelloSwarm():
 			)
 			self.drones[i].set_objective(objective_pos[i])#[0], objective_pos[i][1], objective_pos[i][2])
 
+		# Delay to
 		time.sleep(2)
+		rospy.loginfo("Swarm ready.")
 	
 	def parallel_takeoff(self) :
 		'''
